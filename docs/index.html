@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chinese Vocab Quiz</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <div class="container glass-panel" id="main-container">
+        
+        <!-- Screen 1: Start Screen -->
+        <div id="start-screen" class="screen active">
+            <h1>Vocab Quiz</h1>
+            <p class="subtitle">ロボット工学 中国語単語テスト</p>
+            
+            <div class="status-box">
+                <p id="local-status">辞書データを読み込み中...</p>
+            </div>
+            
+            <div id="setup-panel" class="hidden">
+                <h3 style="margin-bottom: 12px; font-size: 1.1rem; text-align: center;">出題数を選択してください</h3>
+                <div class="choices-grid" style="grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <button class="choice-btn count-btn active-count" data-count="10">10問</button>
+                    <button class="choice-btn count-btn" data-count="30">30問</button>
+                    <button class="choice-btn count-btn" data-count="50">50問</button>
+                    <button class="choice-btn count-btn" data-count="100">100問</button>
+                </div>
+                
+                <div class="action-buttons margin-top">
+                    <button id="btn-start" class="btn primary full-width">
+                        <span class="icon">🚀</span> テストを開始する
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screen 2: Quiz Screen -->
+        <div id="quiz-screen" class="screen">
+            <div class="quiz-header">
+                <span id="question-counter">Question 1/10</span>
+                <span id="score-display">Score: 0</span>
+            </div>
+            
+            <div class="word-card">
+                <h2 id="target-word">--</h2>
+            </div>
+            
+            <div class="choices-grid" id="choices-container">
+                <!-- Choices will be injected here -->
+            </div>
+            
+            <div id="feedback-panel" class="feedback-panel hidden">
+                <h3 id="feedback-title">Correct!</h3>
+                <div class="feedback-details">
+                    <p><strong>正解:</strong> <span id="feedback-meaning"></span></p>
+                    <p><strong>ピンイン:</strong> <span id="feedback-pinyin"></span></p>
+                    <p><strong>例文:</strong> <span id="feedback-context"></span></p>
+                </div>
+                <button id="btn-next" class="btn primary full-width">Next Question</button>
+            </div>
+        </div>
+
+        <!-- Screen 3: Results Screen -->
+        <div id="results-screen" class="screen">
+            <h1>Quiz Complete!</h1>
+            <div class="score-circle">
+                <span id="final-score">0</span><span class="total">/10</span>
+            </div>
+            <p id="result-message" class="result-message">よくできました！</p>
+            
+            <div class="action-buttons margin-top">
+                <button id="btn-restart" class="btn primary">もう一度遊ぶ</button>
+                <button id="btn-home" class="btn secondary">ホームへ戻る</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
