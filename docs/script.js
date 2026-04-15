@@ -203,13 +203,22 @@ btnGotoReview.addEventListener('click', async () => {
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             redirect: 'follow'
         });
-        const json = await res.json().catch(() => ({ ok: false, error: 'invalid_response' }));
+        const rawText = await res.text();
+        let json;
+        try { json = JSON.parse(rawText); }
+        catch (_) { json = { ok: false, error: 'invalid_response', raw: rawText.slice(0, 200) }; }
+        console.log('[review] GAS response:', json);
         if (!json.ok) {
             if (json.error === 'not_allowed') {
                 reviewStatusEl.innerText = 'このパスワードでは履歴を参照できません。';
             } else {
-                reviewStatusEl.innerText = '取得に失敗しました: ' + (json.error || 'unknown');
+                reviewStatusEl.innerText = '取得に失敗しました: ' + (json.error || 'unknown') + (json.raw ? ' / ' + json.raw : '');
             }
+            return;
+        }
+
+        if (!('records' in json)) {
+            reviewStatusEl.innerText = 'GAS 側の応答に records が含まれていません。新バージョンで再デプロイされているか確認してください。';
             return;
         }
 
