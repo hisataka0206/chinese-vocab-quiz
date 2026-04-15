@@ -10,6 +10,6 @@
 // Leaving gasUrl empty disables logging (the quiz still works locally).
 
 window.QUIZ_CONFIG = {
-  gasUrl: "https://script.google.com/macros/s/AKfycbynHtGazdGvIWRgT-nE_Fp9_cugqxP5jaUE1ZU8OKfJmExHlJslCox2zOvBHDb-0mzP0w/exec",
+  gasUrl: "https://script.google.com/macros/s/AKfycbwYVX4syOJ_K-B-hU_LtAOv4-Jkt8Pdo1sUQY1IYsQoJhphjBes1tk52Z6ZTtsr_x068A/exec",
   sharedSecret: "openssl rand -hex 16"
 };
