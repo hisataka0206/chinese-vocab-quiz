@@ -300,10 +300,18 @@ h2 {
     font-weight: 600;
 }
 
-.count-btn.active-count {
+.count-btn.active-count,
+.mode-btn.active-count,
+.review-count-btn.active-count {
     background: var(--primary);
     border-color: var(--primary);
     color: white;
+}
+
+.mode-btn,
+.review-count-btn {
+    text-align: center;
+    font-weight: 600;
 }
 
 /* Feedback panel */

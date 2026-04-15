@@ -16,6 +16,10 @@
  *   - Details sheet receives per-question results only when the player name
  *     matches one of ALLOWED_DETAIL_USERS (case-insensitive).
  *   - Headers are auto-created on first write so you do not need to set them manually.
+ *
+ *   - Additionally supports action="fetch" for the review-mode UI:
+ *       POST { secret, action: "fetch", name } -> { ok, records: [{word, isCorrect, timestamp}, ...] }
+ *     Only names in ALLOWED_DETAIL_USERS can retrieve history (case-insensitive).
  */
 
 const ALLOWED_DETAIL_USERS = ['shuasa', 'shiratoriyo'];
@@ -31,50 +35,107 @@ function doPost(e) {
       return _json({ ok: false, error: 'invalid_secret' });
     }
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const tz = Session.getScriptTimeZone();
-    const iso = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss');
-    const name = String(data.name || '').trim();
-
-    // Always append summary row
-    const summary = _getOrCreateSheet(ss, SUMMARY_SHEET, [
-      'Timestamp', 'Name', 'QuestionCount', 'CorrectCount', 'ScorePercent', 'DurationSec'
-    ]);
-    summary.appendRow([
-      iso,
-      name,
-      Number(data.questionCount) || 0,
-      Number(data.correctCount) || 0,
-      Number(data.scorePercent) || 0,
-      Number(data.durationSec) || 0
-    ]);
-
-    // Conditionally append per-question detail rows
-    const loweredAllowed = ALLOWED_DETAIL_USERS.map(function (s) { return s.toLowerCase(); });
-    const detailsAllowed = loweredAllowed.indexOf(name.toLowerCase()) !== -1;
-
-    if (detailsAllowed && Array.isArray(data.details) && data.details.length > 0) {
-      const details = _getOrCreateSheet(ss, DETAILS_SHEET, [
-        'Timestamp', 'Name', 'Word', 'Pinyin', 'CorrectMeaning', 'SelectedMeaning', 'IsCorrect'
-      ]);
-      const rows = data.details.map(function (d) {
-        return [
-          iso,
-          name,
-          String(d.word || ''),
-          String(d.pinyin || ''),
-          String(d.correctMeaning || ''),
-          String(d.selectedMeaning || ''),
-          !!d.isCorrect
-        ];
-      });
-      details.getRange(details.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+    if (data.action === 'fetch') {
+      return _handleFetch(data);
     }
-
-    return _json({ ok: true, detailsLogged: detailsAllowed });
+    return _handleLog(data);
   } catch (err) {
     return _json({ ok: false, error: String(err) });
   }
+}
+
+function _handleLog(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = Session.getScriptTimeZone();
+  const iso = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss');
+  const name = String(data.name || '').trim();
+
+  // Always append summary row
+  const summary = _getOrCreateSheet(ss, SUMMARY_SHEET, [
+    'Timestamp', 'Name', 'QuestionCount', 'CorrectCount', 'ScorePercent', 'DurationSec'
+  ]);
+  summary.appendRow([
+    iso,
+    name,
+    Number(data.questionCount) || 0,
+    Number(data.correctCount) || 0,
+    Number(data.scorePercent) || 0,
+    Number(data.durationSec) || 0
+  ]);
+
+  // Conditionally append per-question detail rows
+  const loweredAllowed = ALLOWED_DETAIL_USERS.map(function (s) { return s.toLowerCase(); });
+  const detailsAllowed = loweredAllowed.indexOf(name.toLowerCase()) !== -1;
+
+  if (detailsAllowed && Array.isArray(data.details) && data.details.length > 0) {
+    const details = _getOrCreateSheet(ss, DETAILS_SHEET, [
+      'Timestamp', 'Name', 'Word', 'Pinyin', 'CorrectMeaning', 'SelectedMeaning', 'IsCorrect'
+    ]);
+    const rows = data.details.map(function (d) {
+      return [
+        iso,
+        name,
+        String(d.word || ''),
+        String(d.pinyin || ''),
+        String(d.correctMeaning || ''),
+        String(d.selectedMeaning || ''),
+        !!d.isCorrect
+      ];
+    });
+    details.getRange(details.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+  }
+
+  return _json({ ok: true, detailsLogged: detailsAllowed });
+}
+
+function _handleFetch(data) {
+  const name = String(data.name || '').trim();
+  if (!name) {
+    return _json({ ok: false, error: 'missing_name' });
+  }
+
+  const loweredAllowed = ALLOWED_DETAIL_USERS.map(function (s) { return s.toLowerCase(); });
+  if (loweredAllowed.indexOf(name.toLowerCase()) === -1) {
+    return _json({ ok: false, error: 'not_allowed' });
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(DETAILS_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return _json({ ok: true, records: [] });
+  }
+
+  const values = sheet.getDataRange().getValues();
+  // Expected header order: Timestamp, Name, Word, Pinyin, CorrectMeaning, SelectedMeaning, IsCorrect
+  const header = values[0];
+  const idx = {
+    ts: header.indexOf('Timestamp'),
+    name: header.indexOf('Name'),
+    word: header.indexOf('Word'),
+    ok: header.indexOf('IsCorrect')
+  };
+  if (idx.name === -1 || idx.word === -1 || idx.ok === -1) {
+    return _json({ ok: false, error: 'bad_header' });
+  }
+
+  const wantedLower = name.toLowerCase();
+  const records = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const rowName = String(row[idx.name] || '').trim().toLowerCase();
+    if (rowName !== wantedLower) continue;
+    const word = String(row[idx.word] || '');
+    if (!word) continue;
+    let ts = row[idx.ts];
+    if (ts instanceof Date) ts = Utilities.formatDate(ts, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+    records.push({
+      word: word,
+      isCorrect: row[idx.ok] === true || String(row[idx.ok]).toUpperCase() === 'TRUE',
+      timestamp: String(ts || '')
+    });
+  }
+
+  return _json({ ok: true, records: records });
 }
 
 function doGet() {

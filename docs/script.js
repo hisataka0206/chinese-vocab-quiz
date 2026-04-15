@@ -1,16 +1,25 @@
 const startScreen = document.getElementById('start-screen');
+const reviewScreen = document.getElementById('review-screen');
 const quizScreen = document.getElementById('quiz-screen');
 const resultsScreen = document.getElementById('results-screen');
 
 const btnStart = document.getElementById('btn-start');
+const btnGotoReview = document.getElementById('btn-goto-review');
+const btnReviewStart = document.getElementById('btn-review-start');
+const btnReviewBack = document.getElementById('btn-review-back');
 const btnNext = document.getElementById('btn-next');
 const btnRestart = document.getElementById('btn-restart');
 const btnHome = document.getElementById('btn-home');
 const countBtns = document.querySelectorAll('.count-btn');
+const modeBtns = document.querySelectorAll('.mode-btn');
+const reviewCountBtns = document.querySelectorAll('.review-count-btn');
 const statusText = document.getElementById('local-status');
 const setupPanel = document.getElementById('setup-panel');
 const playerNameInput = document.getElementById('player-name');
 const logStatusEl = document.getElementById('log-status');
+const reviewStatusEl = document.getElementById('review-status');
+const reviewPanel = document.getElementById('review-panel');
+const reviewPoolInfo = document.getElementById('review-pool-info');
 
 let fullVocabList = [];
 let questions = [];
@@ -20,6 +29,12 @@ let selectedCount = 10;
 let playerName = '';
 let quizStartTs = 0;
 let details = []; // per-question log
+
+// Review-mode state
+let reviewRecords = [];         // raw fetched records from GAS
+let reviewLatestByWord = {};    // word -> {isCorrect, timestamp} (most recent per word)
+let reviewMode = 'wrong';       // 'wrong' | 'correct'
+let reviewSelectedCount = 10;
 
 // Utility: Array Shuffle (Fisher-Yates)
 function shuffle(array) {
@@ -39,9 +54,9 @@ async function loadVocab() {
         // Fetch static json file
         const res = await fetch('local_vocab.json');
         if (!res.ok) throw new Error("JSON Fetch Failed");
-        
+
         fullVocabList = await res.json();
-        
+
         if (fullVocabList.length >= 4) {
             statusText.innerText = `読み込み完了: ${fullVocabList.length} 件の単語が登録されています。`;
             setupPanel.classList.remove('hidden');
@@ -59,7 +74,7 @@ function showScreen(screen) {
     screen.classList.add('active');
 }
 
-// Handle question count selection
+// Handle question count selection (start screen)
 countBtns.forEach(btn => {
     btn.addEventListener('click', (e) => {
         countBtns.forEach(b => b.classList.remove('active-count'));
@@ -68,38 +83,53 @@ countBtns.forEach(btn => {
     });
 });
 
-// Start Quiz logic (generate questions client-side)
-btnStart.addEventListener('click', () => {
-    const qCount = Math.min(selectedCount, fullVocabList.length);
-    if (qCount < 4) return alert("データが足りません");
+// Handle mode selection (review screen)
+modeBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        modeBtns.forEach(b => b.classList.remove('active-count'));
+        e.target.classList.add('active-count');
+        reviewMode = e.target.getAttribute('data-mode');
+        updateReviewPoolInfo();
+    });
+});
 
+// Handle count selection (review screen)
+reviewCountBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        reviewCountBtns.forEach(b => b.classList.remove('active-count'));
+        e.target.classList.add('active-count');
+        reviewSelectedCount = parseInt(e.target.getAttribute('data-count'));
+        updateReviewPoolInfo();
+    });
+});
+
+// Build a quiz from the given pool of target words (must be entries of fullVocabList shape)
+function startQuizWithPool(pool) {
     // Capture player name and start timestamp; reset per-question log
     playerName = (playerNameInput && playerNameInput.value || '').trim();
     quizStartTs = Date.now();
     details = [];
 
-    // Pick random target words
-    const shuffledVocab = shuffle([...fullVocabList]);
-    const targetWords = shuffledVocab.slice(0, qCount);
-    
+    const shuffledPool = shuffle([...pool]);
+    const targetWords = shuffledPool; // caller already sliced to desired size
+
     questions = targetWords.map(target => {
         const correctMeaning = target.meaning;
-        
-        // Find distractors
+
+        // Find distractors from FULL vocab list (not from pool) so review quizzes still have enough variety
         let uniqueMeanings = [...new Set(fullVocabList.filter(v => v.meaning !== correctMeaning).map(v => v.meaning))];
         let distractors = [];
-        
+
         if (uniqueMeanings.length >= 3) {
             distractors = shuffle(uniqueMeanings).slice(0, 3);
         } else {
-            // Fallback
             let flatList = fullVocabList.filter(v => v.meaning !== correctMeaning).map(v => v.meaning);
             distractors = shuffle(flatList).slice(0, 3);
         }
-        
+
         let choices = [...distractors, correctMeaning];
         choices = shuffle(choices);
-        
+
         return {
             word: target.word,
             choices: choices,
@@ -109,24 +139,165 @@ btnStart.addEventListener('click', () => {
             meaning: correctMeaning
         };
     });
-    
+
     currentQuestionIndex = 0;
     score = 0;
     renderQuestion();
     showScreen(quizScreen);
+}
+
+// Start Quiz logic (normal mode - random from full vocab)
+btnStart.addEventListener('click', () => {
+    const qCount = Math.min(selectedCount, fullVocabList.length);
+    if (qCount < 4) return alert("データが足りません");
+
+    const pool = shuffle([...fullVocabList]).slice(0, qCount);
+    startQuizWithPool(pool);
 });
+
+// ---- Review mode ----
+
+btnGotoReview.addEventListener('click', async () => {
+    const name = (playerNameInput && playerNameInput.value || '').trim();
+    if (!name) {
+        alert('先にパスワードを入力してください。');
+        return;
+    }
+
+    // Reset review state and show screen
+    reviewRecords = [];
+    reviewLatestByWord = {};
+    reviewMode = 'wrong';
+    reviewSelectedCount = 10;
+
+    // Reset toggles visually to defaults
+    modeBtns.forEach(b => b.classList.remove('active-count'));
+    const defaultMode = document.querySelector('.mode-btn[data-mode="wrong"]');
+    if (defaultMode) defaultMode.classList.add('active-count');
+
+    reviewCountBtns.forEach(b => b.classList.remove('active-count'));
+    const defaultCount = document.querySelector('.review-count-btn[data-count="10"]');
+    if (defaultCount) defaultCount.classList.add('active-count');
+
+    reviewPanel.classList.add('hidden');
+    reviewPoolInfo.innerText = '';
+    btnReviewStart.disabled = true;
+
+    showScreen(reviewScreen);
+    reviewStatusEl.innerText = '履歴を取得しています...';
+
+    const cfg = window.QUIZ_CONFIG || {};
+    if (!cfg.gasUrl) {
+        reviewStatusEl.innerText = 'サーバー設定がないため復習モードは利用できません。';
+        return;
+    }
+
+    try {
+        const res = await fetch(cfg.gasUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                secret: cfg.sharedSecret || '',
+                action: 'fetch',
+                name: name
+            }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            redirect: 'follow'
+        });
+        const json = await res.json().catch(() => ({ ok: false, error: 'invalid_response' }));
+        if (!json.ok) {
+            if (json.error === 'not_allowed') {
+                reviewStatusEl.innerText = 'このパスワードでは履歴を参照できません。';
+            } else {
+                reviewStatusEl.innerText = '取得に失敗しました: ' + (json.error || 'unknown');
+            }
+            return;
+        }
+
+        reviewRecords = Array.isArray(json.records) ? json.records : [];
+        reviewLatestByWord = aggregateLatestByWord(reviewRecords);
+
+        const totalWords = Object.keys(reviewLatestByWord).length;
+        if (totalWords === 0) {
+            reviewStatusEl.innerText = '履歴がまだありません。まずは通常モードで何問か解いてください。';
+            return;
+        }
+
+        reviewStatusEl.innerText = `履歴 ${reviewRecords.length} 件 / ユニーク ${totalWords} 単語を取得しました。`;
+        reviewPanel.classList.remove('hidden');
+        updateReviewPoolInfo();
+    } catch (err) {
+        reviewStatusEl.innerText = '通信エラー: ' + err.message;
+    }
+});
+
+btnReviewBack.addEventListener('click', () => {
+    showScreen(startScreen);
+});
+
+btnReviewStart.addEventListener('click', () => {
+    const pool = buildReviewPool();
+    if (pool.length < 4) {
+        alert('該当する単語が少なすぎます(4問未満)。別のモードをお試しください。');
+        return;
+    }
+    const qCount = Math.min(reviewSelectedCount, pool.length);
+    const trimmed = shuffle([...pool]).slice(0, qCount);
+    startQuizWithPool(trimmed);
+});
+
+function aggregateLatestByWord(records) {
+    const latest = {};
+    records.forEach(r => {
+        if (!r || !r.word) return;
+        const prev = latest[r.word];
+        if (!prev || String(r.timestamp || '') > String(prev.timestamp || '')) {
+            latest[r.word] = { isCorrect: !!r.isCorrect, timestamp: r.timestamp || '' };
+        }
+    });
+    return latest;
+}
+
+function buildReviewPool() {
+    const wordByKey = {};
+    fullVocabList.forEach(v => { wordByKey[v.word] = v; });
+
+    const pool = [];
+    Object.keys(reviewLatestByWord).forEach(word => {
+        const rec = reviewLatestByWord[word];
+        const matches = reviewMode === 'wrong' ? !rec.isCorrect : rec.isCorrect;
+        if (!matches) return;
+        const entry = wordByKey[word];
+        if (entry) pool.push(entry); // skip words no longer in dictionary
+    });
+    return pool;
+}
+
+function updateReviewPoolInfo() {
+    const pool = buildReviewPool();
+    const label = reviewMode === 'wrong' ? '間違えた' : '正解した';
+    if (pool.length === 0) {
+        reviewPoolInfo.innerText = `最新の試行で${label}単語はありません。`;
+        btnReviewStart.disabled = true;
+        return;
+    }
+    const q = Math.min(reviewSelectedCount, pool.length);
+    reviewPoolInfo.innerText = `最新の試行で${label}単語: ${pool.length} 件 / 出題 ${q} 問`;
+    btnReviewStart.disabled = q < 4;
+}
+
+// ---- Quiz rendering (shared) ----
 
 function renderQuestion() {
     const q = questions[currentQuestionIndex];
     document.getElementById('question-counter').innerText = `Question ${currentQuestionIndex + 1}/${questions.length}`;
     document.getElementById('score-display').innerText = `Score: ${score}`;
     document.getElementById('target-word').innerText = q.word;
-    
+
     const container = document.getElementById('choices-container');
     container.innerHTML = '';
-    
+
     document.getElementById('feedback-panel').classList.add('hidden');
-    
+
     q.choices.forEach((choice, index) => {
         const btn = document.createElement('button');
         btn.className = 'choice-btn';
@@ -166,7 +337,7 @@ function showFeedback(isCorrect, q) {
     const panel = document.getElementById('feedback-panel');
     panel.classList.remove('hidden', 'correct-bg', 'incorrect-bg');
     panel.classList.add(isCorrect ? 'correct-bg' : 'incorrect-bg');
-    
+
     document.getElementById('feedback-title').innerText = isCorrect ? '🎉 正解！' : '❌ 不正解...';
     document.getElementById('feedback-meaning').innerText = q.meaning;
     document.getElementById('feedback-pinyin').innerText = q.pinyin || '-';

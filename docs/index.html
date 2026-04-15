@@ -41,7 +41,45 @@
                     <button id="btn-start" class="btn primary full-width">
                         <span class="icon">🚀</span> テストを開始する
                     </button>
+                    <button id="btn-goto-review" class="btn secondary full-width">
+                        <span class="icon">🔁</span> パスワードを入力して復習モードへ
+                    </button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Screen 1b: Review Setup Screen -->
+        <div id="review-screen" class="screen">
+            <h1>復習モード</h1>
+            <p class="subtitle">過去の履歴から出題します</p>
+
+            <div class="status-box">
+                <p id="review-status">履歴を取得しています...</p>
+            </div>
+
+            <div id="review-panel" class="hidden">
+                <h3 style="margin-bottom: 12px; font-size: 1.1rem; text-align: center;">モードを選択</h3>
+                <div class="choices-grid" style="grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <button class="choice-btn mode-btn active-count" data-mode="wrong">❌ 間違えた問題</button>
+                    <button class="choice-btn mode-btn" data-mode="correct">✅ 正解した問題</button>
+                </div>
+
+                <h3 style="margin: 16px 0 12px; font-size: 1.1rem; text-align: center;">出題数を選択してください</h3>
+                <div class="choices-grid" style="grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <button class="choice-btn review-count-btn active-count" data-count="10">10問</button>
+                    <button class="choice-btn review-count-btn" data-count="30">30問</button>
+                    <button class="choice-btn review-count-btn" data-count="50">50問</button>
+                    <button class="choice-btn review-count-btn" data-count="100">100問</button>
+                </div>
+
+                <p id="review-pool-info" class="subtitle" style="margin-top: 16px; margin-bottom: 0; font-size: 0.95rem; text-align: center;"></p>
+            </div>
+
+            <div class="action-buttons margin-top">
+                <button id="btn-review-start" class="btn primary full-width" disabled>
+                    <span class="icon">🚀</span> 復習を開始する
+                </button>
+                <button id="btn-review-back" class="btn secondary full-width">ホームへ戻る</button>
             </div>
         </div>
 
