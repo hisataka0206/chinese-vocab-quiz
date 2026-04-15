@@ -376,3 +376,43 @@ h2 {
     font-size: 1.5rem;
     font-weight: 600;
 }
+
+/* Name input on start screen */
+.name-input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--glass-border);
+    background: rgba(15, 23, 42, 0.6);
+    color: var(--text-main);
+    font-family: inherit;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.name-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+}
+
+.name-input::placeholder {
+    color: var(--text-muted);
+}
+
+/* Result-screen log status indicator */
+.log-status {
+    margin-top: 16px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 1.2em;
+}
+
+.log-status.success {
+    color: var(--success);
+}
+
+.log-status.error {
+    color: var(--error);
+}

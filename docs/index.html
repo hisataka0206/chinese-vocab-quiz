@@ -26,14 +26,17 @@
             </div>
             
             <div id="setup-panel" class="hidden">
-                <h3 style="margin-bottom: 12px; font-size: 1.1rem; text-align: center;">出題数を選択してください</h3>
+                <h3 style="margin-bottom: 8px; font-size: 1.1rem; text-align: center;">プレイヤー名 (任意)</h3>
+                <input type="text" id="player-name" class="name-input" placeholder="例: shuasa" autocomplete="off" spellcheck="false" />
+
+                <h3 style="margin: 16px 0 12px; font-size: 1.1rem; text-align: center;">出題数を選択してください</h3>
                 <div class="choices-grid" style="grid-template-columns: 1fr 1fr; gap: 8px;">
                     <button class="choice-btn count-btn active-count" data-count="10">10問</button>
                     <button class="choice-btn count-btn" data-count="30">30問</button>
                     <button class="choice-btn count-btn" data-count="50">50問</button>
                     <button class="choice-btn count-btn" data-count="100">100問</button>
                 </div>
-                
+
                 <div class="action-buttons margin-top">
                     <button id="btn-start" class="btn primary full-width">
                         <span class="icon">🚀</span> テストを開始する
@@ -76,6 +79,8 @@
             </div>
             <p id="result-message" class="result-message">よくできました！</p>
             
+            <div id="log-status" class="log-status hidden"></div>
+
             <div class="action-buttons margin-top">
                 <button id="btn-restart" class="btn primary">もう一度遊ぶ</button>
                 <button id="btn-home" class="btn secondary">ホームへ戻る</button>
@@ -84,6 +89,7 @@
 
     </div>
 
+    <script src="config.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

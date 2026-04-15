@@ -9,12 +9,17 @@ const btnHome = document.getElementById('btn-home');
 const countBtns = document.querySelectorAll('.count-btn');
 const statusText = document.getElementById('local-status');
 const setupPanel = document.getElementById('setup-panel');
+const playerNameInput = document.getElementById('player-name');
+const logStatusEl = document.getElementById('log-status');
 
 let fullVocabList = [];
 let questions = [];
 let currentQuestionIndex = 0;
 let score = 0;
 let selectedCount = 10;
+let playerName = '';
+let quizStartTs = 0;
+let details = []; // per-question log
 
 // Utility: Array Shuffle (Fisher-Yates)
 function shuffle(array) {
@@ -67,7 +72,12 @@ countBtns.forEach(btn => {
 btnStart.addEventListener('click', () => {
     const qCount = Math.min(selectedCount, fullVocabList.length);
     if (qCount < 4) return alert("データが足りません");
-    
+
+    // Capture player name and start timestamp; reset per-question log
+    playerName = (playerNameInput && playerNameInput.value || '').trim();
+    quizStartTs = Date.now();
+    details = [];
+
     // Pick random target words
     const shuffledVocab = shuffle([...fullVocabList]);
     const targetWords = shuffledVocab.slice(0, qCount);
@@ -129,7 +139,7 @@ function renderQuestion() {
 function handleAnswer(selectedIndex, btn, q) {
     const allBtns = document.querySelectorAll('.choice-btn');
     allBtns.forEach(b => b.disabled = true); // lock answers
-    
+
     const isCorrect = selectedIndex === q.correct_idx;
     if (isCorrect) {
         btn.classList.add('correct');
@@ -139,7 +149,16 @@ function handleAnswer(selectedIndex, btn, q) {
         btn.classList.add('incorrect');
         allBtns[q.correct_idx].classList.add('correct');
     }
-    
+
+    // Record per-question detail for optional server-side logging
+    details.push({
+        word: q.word,
+        pinyin: q.pinyin || '',
+        correctMeaning: q.meaning,
+        selectedMeaning: q.choices[selectedIndex],
+        isCorrect: isCorrect
+    });
+
     showFeedback(isCorrect, q);
 }
 
@@ -167,18 +186,74 @@ function showResults() {
     document.getElementById('final-score').innerText = score;
     const total = questions.length;
     document.querySelector('.total').innerText = `/${total}`;
-    
+
     const msg = document.getElementById('result-message');
     if (score === total) msg.innerText = "パーフェクト！素晴らしいです🎉";
     else if (score >= total * 0.8) msg.innerText = "よくできました！👍";
     else msg.innerText = "さらに復習して定着させましょう！💪";
-    
+
     // Update circle degree
     const circle = document.querySelector('.score-circle');
     const deg = (score / total) * 360;
     circle.style.background = `conic-gradient(var(--primary) ${deg}deg, rgba(255,255,255,0.1) 0)`;
-    
+
     showScreen(resultsScreen);
+
+    // Reset log indicator before sending
+    if (logStatusEl) {
+        logStatusEl.classList.remove('success', 'error');
+        logStatusEl.classList.add('hidden');
+        logStatusEl.innerText = '';
+    }
+
+    // Fire-and-forget log upload to GAS backend (if configured)
+    sendLog(total).catch(err => console.error('log error:', err));
+}
+
+function setLogStatus(text, kind) {
+    if (!logStatusEl) return;
+    logStatusEl.classList.remove('hidden', 'success', 'error');
+    if (kind) logStatusEl.classList.add(kind);
+    logStatusEl.innerText = text;
+}
+
+async function sendLog(total) {
+    const cfg = window.QUIZ_CONFIG || {};
+    if (!cfg.gasUrl) {
+        // Logging disabled (no backend configured). Silent.
+        if (logStatusEl) logStatusEl.classList.add('hidden');
+        return;
+    }
+
+    const durationSec = quizStartTs > 0 ? Math.round((Date.now() - quizStartTs) / 1000) : 0;
+    const payload = {
+        secret: cfg.sharedSecret || '',
+        name: playerName,
+        questionCount: total,
+        correctCount: score,
+        scorePercent: total > 0 ? Math.round((score / total) * 100) : 0,
+        durationSec: durationSec,
+        details: details
+    };
+
+    setLogStatus('記録を送信中...', null);
+    try {
+        // Use text/plain to avoid CORS preflight. GAS parses e.postData.contents as JSON.
+        const res = await fetch(cfg.gasUrl, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            redirect: 'follow'
+        });
+        const json = await res.json().catch(() => ({ ok: false, error: 'invalid_response' }));
+        if (json.ok) {
+            setLogStatus(json.detailsLogged ? '記録しました(詳細含む)' : '記録しました', 'success');
+        } else {
+            setLogStatus('記録に失敗しました: ' + (json.error || 'unknown'), 'error');
+        }
+    } catch (err) {
+        setLogStatus('送信エラー: ' + err.message, 'error');
+    }
 }
 
 btnRestart.addEventListener('click', () => {
