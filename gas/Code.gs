@@ -23,6 +23,9 @@
  */
 
 const ALLOWED_DETAIL_USERS = ['shuasa', 'shiratoriyo'];
+// IMPORTANT: This value MUST match docs/config.js's `sharedSecret` exactly.
+// If you paste this file into Apps Script, do NOT overwrite the value you already
+// have set here. If you see 'invalid_secret' responses, the two values have drifted.
 const SHARED_SECRET = 'REPLACE_WITH_A_RANDOM_STRING';
 const SUMMARY_SHEET = 'Summary';
 const DETAILS_SHEET = 'Details';
