@@ -36,6 +36,28 @@ let reviewLatestByWord = {};    // word -> {isCorrect, timestamp} (most recent p
 let reviewMode = 'wrong';       // 'wrong' | 'correct'
 let reviewSelectedCount = 10;
 
+// ---- Text-to-Speech (Chinese pronunciation) ----
+
+function speakChinese(text) {
+    if (!text || !('speechSynthesis' in window)) return;
+    // Cancel any ongoing speech
+    speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'zh-CN';
+    utter.rate = 0.85; // slightly slower for learners
+    // Try to pick a Chinese voice if available
+    const voices = speechSynthesis.getVoices();
+    const zhVoice = voices.find(v => v.lang.startsWith('zh'));
+    if (zhVoice) utter.voice = zhVoice;
+    speechSynthesis.speak(utter);
+}
+
+// Preload voices (some browsers load them asynchronously)
+if ('speechSynthesis' in window) {
+    speechSynthesis.getVoices();
+    speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+}
+
 // Utility: Array Shuffle (Fisher-Yates)
 function shuffle(array) {
     let currentIndex = array.length;
@@ -146,12 +168,66 @@ function startQuizWithPool(pool) {
     showScreen(quizScreen);
 }
 
+// Fetch recent history words from GAS (returns Set of word strings)
+async function fetchRecentWords(name, limit) {
+    const cfg = window.QUIZ_CONFIG || {};
+    if (!cfg.gasUrl || !name) return new Set();
+
+    try {
+        const res = await fetch(cfg.gasUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                secret: cfg.sharedSecret || '',
+                action: 'fetch',
+                name: name
+            }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            redirect: 'follow'
+        });
+        const json = await res.json().catch(() => ({ ok: false }));
+        if (!json.ok || !Array.isArray(json.records)) return new Set();
+
+        // Take the most recent N records and collect unique words
+        const recent = json.records.slice(-limit);
+        return new Set(recent.map(r => r.word).filter(Boolean));
+    } catch (err) {
+        console.warn('[normal] history fetch failed:', err.message);
+        return new Set();
+    }
+}
+
 // Start Quiz logic (normal mode - random from full vocab)
-btnStart.addEventListener('click', () => {
+btnStart.addEventListener('click', async () => {
+    const name = (playerNameInput && playerNameInput.value || '').trim();
     const qCount = Math.min(selectedCount, fullVocabList.length);
     if (qCount < 4) return alert("データが足りません");
 
-    const pool = shuffle([...fullVocabList]).slice(0, qCount);
+    let pool;
+
+    if (name) {
+        // Password entered: exclude recently quizzed words (last 100 records)
+        statusText.innerText = '出題履歴を確認中...';
+        const recentWords = await fetchRecentWords(name, 100);
+        statusText.innerText = '';
+
+        if (recentWords.size > 0) {
+            const freshPool = fullVocabList.filter(v => !recentWords.has(v.word));
+            if (freshPool.length >= 4) {
+                pool = shuffle([...freshPool]).slice(0, Math.min(qCount, freshPool.length));
+                console.log(`[normal] Excluded ${recentWords.size} recent words, pool: ${freshPool.length}`);
+            } else {
+                // Not enough fresh words — fall back to full vocab
+                pool = shuffle([...fullVocabList]).slice(0, qCount);
+                console.log(`[normal] Fresh pool too small (${freshPool.length}), using full vocab`);
+            }
+        } else {
+            pool = shuffle([...fullVocabList]).slice(0, qCount);
+        }
+    } else {
+        // No password: original behavior
+        pool = shuffle([...fullVocabList]).slice(0, qCount);
+    }
+
     startQuizWithPool(pool);
 });
 
@@ -351,6 +427,20 @@ function showFeedback(isCorrect, q) {
     document.getElementById('feedback-meaning').innerText = q.meaning;
     document.getElementById('feedback-pinyin').innerText = q.pinyin || '-';
     document.getElementById('feedback-context').innerText = q.context_cn || '-';
+
+    // Wire up the speak button
+    const speakBtn = document.getElementById('btn-speak');
+    if (speakBtn) {
+        // Build speech text: word first, then example sentence if available
+        const speechText = q.context_cn ? q.word + '。' + q.context_cn : q.word;
+        speakBtn.onclick = () => speakChinese(speechText);
+    }
+
+    // Auto-play pronunciation after a short delay
+    setTimeout(() => {
+        const speechText = q.context_cn ? q.word + '。' + q.context_cn : q.word;
+        speakChinese(speechText);
+    }, 300);
 }
 
 btnNext.addEventListener('click', () => {

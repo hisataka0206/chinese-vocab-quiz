@@ -22,7 +22,7 @@
  *     Only names in ALLOWED_DETAIL_USERS can retrieve history (case-insensitive).
  */
 
-const ALLOWED_DETAIL_USERS = ['shuasa', 'shiratoriyo'];
+const ALLOWED_DETAIL_USERS = ['shuasa', 'yoshira'];
 // IMPORTANT: This value MUST match docs/config.js's `sharedSecret` exactly.
 // If you paste this file into Apps Script, do NOT overwrite the value you already
 // have set here. If you see 'invalid_secret' responses, the two values have drifted.
