@@ -324,11 +324,11 @@ function pitchLoop(analyser) {
 // Autocorrelation pitch detection (simplified)
 function autoCorrelate(buf, sampleRate) {
   const SIZE = buf.length;
-  // RMS to check volume
+  // RMS to check volume - higher threshold to reject background noise & breathing
   let rms = 0;
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
-  if (rms < 0.01) return -1;
+  if (rms < 0.025) return -1;
 
   let r1 = 0, r2 = SIZE - 1, thres = 0.2;
   for (let i = 0; i < SIZE / 2; i++) {
@@ -470,9 +470,30 @@ function drawIdealTone(tone, x0, x1, padY, plotH) {
   ctx.stroke();
 }
 
+// Apply a 5-tap median filter to suppress octave errors and spurious blips
+function smoothPitchTrack(track) {
+  const out = track.map((p) => ({ t: p.t, hz: p.hz }));
+  const win = 2; // half-window
+  for (let i = 0; i < track.length; i++) {
+    if (track[i].hz === null) continue;
+    const buf = [];
+    for (let j = -win; j <= win; j++) {
+      const idx = i + j;
+      if (idx < 0 || idx >= track.length) continue;
+      if (track[idx].hz !== null) buf.push(track[idx].hz);
+    }
+    if (buf.length >= 3) {
+      buf.sort((a, b) => a - b);
+      out[i].hz = buf[Math.floor(buf.length / 2)];
+    }
+  }
+  return out;
+}
+
 // Convert recorded pitch (Hz) to relative level 1-5 based on session min/max
 function normalizePitch() {
-  const voiced = state.pitchTrack.filter((p) => p.hz !== null);
+  const smoothed = smoothPitchTrack(state.pitchTrack);
+  const voiced = smoothed.filter((p) => p.hz !== null);
   if (voiced.length < 5) return null;
   const hzs = voiced.map((p) => p.hz);
   hzs.sort((a, b) => a - b);
@@ -480,7 +501,7 @@ function normalizePitch() {
   const lo = hzs[Math.floor(hzs.length * 0.1)];
   const hi = hzs[Math.floor(hzs.length * 0.9)];
   const range = Math.max(hi - lo, 30); // semitones equivalent
-  return state.pitchTrack.map((p) => {
+  return smoothed.map((p) => {
     if (p.hz === null) return { t: p.t, lv: null };
     const lv = 1 + 4 * ((p.hz - lo) / range);
     return { t: p.t, lv: Math.max(1, Math.min(5, lv)) };
@@ -546,18 +567,41 @@ function drawUser() {
 // =============================================================
 // Scoring
 // =============================================================
-function finalizeAnalysis() {
-  // Detect voiced range with hysteresis: trim leading/trailing silence,
-  // but tolerate brief unvoiced gaps inside the utterance (between syllables).
-  const track = state.pitchTrack;
-  let firstVoiced = -1, lastVoiced = -1;
+// Find the LONGEST contiguous voiced segment, allowing brief unvoiced gaps
+// (e.g. between syllables). Spurious isolated voiced frames at the start/end
+// of the recording (cough, lip noise, breathing) get filtered out.
+function detectMainVoicedSegment(track, maxGapSec = 0.18) {
+  if (track.length === 0) return null;
+  const segments = [];
+  let curStart = -1, curEnd = -1, lastVoicedT = -1;
   for (let i = 0; i < track.length; i++) {
-    if (track[i].hz !== null) {
-      if (firstVoiced === -1) firstVoiced = i;
-      lastVoiced = i;
+    const p = track[i];
+    if (p.hz !== null) {
+      if (curStart < 0) curStart = p.t;
+      curEnd = p.t;
+      lastVoicedT = p.t;
+    } else if (curStart >= 0 && (p.t - lastVoicedT) > maxGapSec) {
+      // Long enough gap: close current segment
+      segments.push({ start: curStart, end: curEnd, dur: curEnd - curStart });
+      curStart = -1;
     }
   }
-  if (firstVoiced === -1 || lastVoiced - firstVoiced < 3) {
+  if (curStart >= 0) {
+    segments.push({ start: curStart, end: curEnd, dur: curEnd - curStart });
+  }
+  if (segments.length === 0) return null;
+  // Drop very short segments (likely noise)
+  const realSegments = segments.filter((s) => s.dur >= 0.10);
+  const pool = realSegments.length > 0 ? realSegments : segments;
+  // Pick the longest as the main utterance
+  pool.sort((a, b) => b.dur - a.dur);
+  return pool[0];
+}
+
+function finalizeAnalysis() {
+  const track = state.pitchTrack;
+  const seg = detectMainVoicedSegment(track);
+  if (!seg || seg.dur < 0.15) {
     scoreEl.textContent = '--';
     toneScoresEl.innerHTML = '';
     statusEl.textContent = '⚠️ 音声が検出できませんでした。マイク音量を確認してもう一度お試しください';
@@ -567,8 +611,8 @@ function finalizeAnalysis() {
   }
   // Add a tiny padding so the line doesn't kiss the canvas edges
   const PAD = 0.04; // 40ms
-  state.voicedStart = Math.max(0, track[firstVoiced].t - PAD);
-  state.voicedEnd = Math.min(state.recordDuration, track[lastVoiced].t + PAD);
+  state.voicedStart = Math.max(0, seg.start - PAD);
+  state.voicedEnd = Math.min(state.recordDuration, seg.end + PAD);
   state.finalized = true;
   drawUser();
   computeScore();
@@ -583,14 +627,17 @@ function computeScore() {
     statusEl.textContent = '⚠️ 音声が検出できませんでした。もう一度お試しください';
     return;
   }
-  const voiced = norm.filter((p) => p.lv !== null);
+  // Restrict to the main voiced segment that was used for visualization
+  const segStart = state.voicedStart !== null ? state.voicedStart : 0;
+  const segEnd = state.voicedEnd !== null ? state.voicedEnd : state.recordDuration;
+  const voiced = norm.filter((p) => p.lv !== null && p.t >= segStart && p.t <= segEnd);
   if (voiced.length < 10) {
     scoreEl.textContent = '--';
     statusEl.textContent = '⚠️ 有声フレームが少なすぎます。マイク音量を確認してください';
     return;
   }
-  const minT = voiced[0].t;
-  const maxT = voiced[voiced.length - 1].t;
+  const minT = segStart;
+  const maxT = segEnd;
   const durFrame = Math.max(maxT - minT, 0.2);
   const nSyl = word.tones.length;
 
