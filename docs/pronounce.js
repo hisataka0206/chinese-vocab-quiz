@@ -328,7 +328,7 @@ function autoCorrelate(buf, sampleRate) {
   let rms = 0;
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
-  if (rms < 0.025) return -1;
+  if (rms < 0.015) return -1;
 
   let r1 = 0, r2 = SIZE - 1, thres = 0.2;
   for (let i = 0; i < SIZE / 2; i++) {
@@ -567,10 +567,12 @@ function drawUser() {
 // =============================================================
 // Scoring
 // =============================================================
-// Find the LONGEST contiguous voiced segment, allowing brief unvoiced gaps
-// (e.g. between syllables). Spurious isolated voiced frames at the start/end
-// of the recording (cough, lip noise, breathing) get filtered out.
-function detectMainVoicedSegment(track, maxGapSec = 0.18) {
+// Detect the speech region by splitting the recording into voiced segments
+// (with up to 350ms gaps allowed inside a single segment), then keeping the
+// top-N segments by duration where N = expected syllable count. This handles
+// natural inter-syllable pauses in deliberate Chinese speech while still
+// rejecting isolated noise at recording start/end.
+function detectSpeechRange(track, expectedSyllables, maxGapSec = 0.35) {
   if (track.length === 0) return null;
   const segments = [];
   let curStart = -1, curEnd = -1, lastVoicedT = -1;
@@ -581,7 +583,6 @@ function detectMainVoicedSegment(track, maxGapSec = 0.18) {
       curEnd = p.t;
       lastVoicedT = p.t;
     } else if (curStart >= 0 && (p.t - lastVoicedT) > maxGapSec) {
-      // Long enough gap: close current segment
       segments.push({ start: curStart, end: curEnd, dur: curEnd - curStart });
       curStart = -1;
     }
@@ -590,18 +591,29 @@ function detectMainVoicedSegment(track, maxGapSec = 0.18) {
     segments.push({ start: curStart, end: curEnd, dur: curEnd - curStart });
   }
   if (segments.length === 0) return null;
-  // Drop very short segments (likely noise)
-  const realSegments = segments.filter((s) => s.dur >= 0.10);
-  const pool = realSegments.length > 0 ? realSegments : segments;
-  // Pick the longest as the main utterance
-  pool.sort((a, b) => b.dur - a.dur);
-  return pool[0];
+
+  // Drop tiny segments likely to be noise pops or breath
+  const valid = segments.filter((s) => s.dur >= 0.08);
+  const pool = valid.length > 0 ? valid : segments;
+
+  // Keep at most `expectedSyllables` segments (the longest ones) so isolated
+  // noise extras don't extend the range. Then use [first.start, last.end].
+  const byDur = [...pool].sort((a, b) => b.dur - a.dur);
+  const keep = byDur.slice(0, Math.max(1, expectedSyllables)).sort((a, b) => a.start - b.start);
+  return {
+    start: keep[0].start,
+    end: keep[keep.length - 1].end,
+    dur: keep[keep.length - 1].end - keep[0].start,
+    segments: keep,
+  };
 }
 
 function finalizeAnalysis() {
   const track = state.pitchTrack;
-  const seg = detectMainVoicedSegment(track);
-  if (!seg || seg.dur < 0.15) {
+  const word = state.filtered[state.currentIdx];
+  const nSyl = word ? word.tones.length : 2;
+  const seg = detectSpeechRange(track, nSyl);
+  if (!seg || seg.dur < 0.12) {
     scoreEl.textContent = '--';
     toneScoresEl.innerHTML = '';
     statusEl.textContent = '⚠️ 音声が検出できませんでした。マイク音量を確認してもう一度お試しください';
