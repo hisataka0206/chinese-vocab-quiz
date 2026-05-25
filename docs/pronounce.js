@@ -96,7 +96,10 @@ const state = {
   recording: false,
   pitchTrack: [], // {t: seconds, hz: number}
   recordStartTime: 0,
-  recordDuration: 3.0, // seconds
+  recordDuration: 3.0, // seconds (recording window upper bound)
+  voicedStart: null,   // sec from recordStart, populated after finalize
+  voicedEnd: null,
+  finalized: false,    // when true, drawUser uses voiced range; else uses [0, recordDuration]
   loopMode: false,
 };
 
@@ -207,6 +210,9 @@ function showCurrent() {
   wordCombo.textContent = `${w.tones.join('-')}声 コンビ`;
   wordSelect.value = String(state.currentIdx);
   state.pitchTrack = [];
+  state.voicedStart = null;
+  state.voicedEnd = null;
+  state.finalized = false;
   scoreEl.textContent = '--';
   toneScoresEl.innerHTML = '';
   drawIdeal();
@@ -262,6 +268,9 @@ async function startRecording() {
     analyser.fftSize = 4096;
     source.connect(analyser);
     state.pitchTrack = [];
+    state.voicedStart = null;
+    state.voicedEnd = null;
+    state.finalized = false;
     state.recording = true;
     state.recordStartTime = state.audioCtx.currentTime;
     btnRecord.classList.add('active');
@@ -485,10 +494,23 @@ function drawUser() {
   const plotW = w - padX * 2, plotH = h - padY * 2;
   const norm = normalizePitch();
   if (!norm || norm.length === 0) return;
-  const totalDur = state.recordDuration;
-  // map: t in [0, totalDur] → x in [padX, w-padX]
+
+  // Determine time window for X-axis mapping.
+  // - finalized=false (live recording): use [0, recordDuration] so the line grows from left
+  // - finalized=true: use [voicedStart, voicedEnd] so the user's actual utterance fills the canvas
+  let tStart, tEnd;
+  if (state.finalized && state.voicedStart !== null && state.voicedEnd !== null) {
+    tStart = state.voicedStart;
+    tEnd = state.voicedEnd;
+  } else {
+    tStart = 0;
+    tEnd = state.recordDuration;
+  }
+  const totalDur = Math.max(tEnd - tStart, 0.05);
+
   const yOf = (lv) => padY + plotH * (1 - (lv - 1) / 4);
-  // draw segments only when voiced
+
+  // Draw the user's pitch line
   ctx.strokeStyle = '#06b6d4';
   ctx.lineWidth = 3;
   ctx.shadowColor = 'rgba(6,182,212,0.5)';
@@ -497,8 +519,8 @@ function drawUser() {
   let pen = false;
   for (let i = 0; i < norm.length; i++) {
     const p = norm[i];
-    const t = Math.min(p.t, totalDur);
-    const x = padX + plotW * (t / totalDur);
+    if (p.t < tStart - 0.001 || p.t > tEnd + 0.001) { pen = false; continue; }
+    const x = padX + plotW * ((p.t - tStart) / totalDur);
     if (p.lv === null) {
       pen = false;
     } else {
@@ -509,12 +531,45 @@ function drawUser() {
   }
   ctx.stroke();
   ctx.shadowBlur = 0;
+
+  // Duration label at top-right
+  ctx.fillStyle = '#a8a8c8';
+  ctx.font = '12px Outfit, sans-serif';
+  ctx.textAlign = 'right';
+  const durLabel = state.finalized
+    ? `発声長: ${totalDur.toFixed(2)}秒 (有声区間にフィット)`
+    : `録音窓: ${totalDur.toFixed(1)}秒`;
+  ctx.fillText(durLabel, w - 6, 16);
+  ctx.textAlign = 'start';
 }
 
 // =============================================================
 // Scoring
 // =============================================================
 function finalizeAnalysis() {
+  // Detect voiced range with hysteresis: trim leading/trailing silence,
+  // but tolerate brief unvoiced gaps inside the utterance (between syllables).
+  const track = state.pitchTrack;
+  let firstVoiced = -1, lastVoiced = -1;
+  for (let i = 0; i < track.length; i++) {
+    if (track[i].hz !== null) {
+      if (firstVoiced === -1) firstVoiced = i;
+      lastVoiced = i;
+    }
+  }
+  if (firstVoiced === -1 || lastVoiced - firstVoiced < 3) {
+    scoreEl.textContent = '--';
+    toneScoresEl.innerHTML = '';
+    statusEl.textContent = '⚠️ 音声が検出できませんでした。マイク音量を確認してもう一度お試しください';
+    state.finalized = false;
+    drawIdeal();
+    return;
+  }
+  // Add a tiny padding so the line doesn't kiss the canvas edges
+  const PAD = 0.04; // 40ms
+  state.voicedStart = Math.max(0, track[firstVoiced].t - PAD);
+  state.voicedEnd = Math.min(state.recordDuration, track[lastVoiced].t + PAD);
+  state.finalized = true;
   drawUser();
   computeScore();
 }
