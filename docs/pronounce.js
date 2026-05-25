@@ -260,19 +260,38 @@ async function startRecording() {
       state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
     if (state.audioCtx.state === 'suspended') await state.audioCtx.resume();
-    state.mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
-    const source = state.audioCtx.createMediaStreamSource(state.mediaStream);
+
+    // Use minimal constraints — iOS Safari can reject restrictive constraints
+    // (echoCancellation:false / autoGainControl:false) and yield a silent stream.
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e1) {
+      throw e1;
+    }
+    state.mediaStream = stream;
+
+    const source = state.audioCtx.createMediaStreamSource(stream);
     const analyser = state.audioCtx.createAnalyser();
     analyser.fftSize = 4096;
     source.connect(analyser);
+
+    // CRITICAL for iOS Safari: connect source → silent gain → destination so
+    // the audio graph actually pumps data through the analyser. Without this,
+    // analyser.getFloatTimeDomainData returns zeroed buffers on iOS.
+    const silentGain = state.audioCtx.createGain();
+    silentGain.gain.value = 0;
+    source.connect(silentGain);
+    silentGain.connect(state.audioCtx.destination);
+    state._silentGain = silentGain;
+
     state.pitchTrack = [];
     state.voicedStart = null;
     state.voicedEnd = null;
     state.finalized = false;
     state.recording = true;
     state.recordStartTime = state.audioCtx.currentTime;
+    state.peakRms = 0;
     btnRecord.classList.add('active');
     btnRecord.textContent = '⏹ 停止 (' + state.recordDuration.toFixed(1) + 's)';
     statusEl.textContent = '🎙 録音中... ' + state.filtered[state.currentIdx].w + ' を発音してください';
@@ -280,7 +299,7 @@ async function startRecording() {
     pitchLoop(analyser);
     setTimeout(() => { if (state.recording) stopRecording(); }, state.recordDuration * 1000);
   } catch (e) {
-    statusEl.textContent = '⚠️ マイクへのアクセスが拒否されました: ' + e.message;
+    statusEl.textContent = '⚠️ マイクアクセス失敗: ' + (e.name || '') + ' ' + (e.message || e);
     state.recording = false;
   }
 }
@@ -293,7 +312,12 @@ function stopRecording() {
     state.mediaStream.getTracks().forEach((t) => t.stop());
     state.mediaStream = null;
   }
-  statusEl.textContent = '録音完了。分析中...';
+  if (state._silentGain) {
+    try { state._silentGain.disconnect(); } catch (e) {}
+    state._silentGain = null;
+  }
+  const peakPct = Math.round((state.peakRms || 0) * 600);
+  statusEl.textContent = `録音完了。分析中... (録音中ピーク入力レベル: ${peakPct}%)`;
   finalizeAnalysis();
   if (state.loopMode) {
     setTimeout(() => {
@@ -309,14 +333,27 @@ function pitchLoop(analyser) {
   if (!state.recording) return;
   const buf = new Float32Array(analyser.fftSize);
   analyser.getFloatTimeDomainData(buf);
+
+  // Compute RMS for the live meter (also useful for diagnostics)
+  let rms = 0;
+  for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
+  rms = Math.sqrt(rms / buf.length);
+  state.lastRms = rms;
+  if (rms > (state.peakRms || 0)) state.peakRms = rms;
+
   const hz = autoCorrelate(buf, state.audioCtx.sampleRate);
   const t = state.audioCtx.currentTime - state.recordStartTime;
   if (hz > 60 && hz < 600) {
     state.pitchTrack.push({ t, hz });
   } else {
-    // silence/unvoiced - still record gap marker
     state.pitchTrack.push({ t, hz: null });
   }
+
+  // Live status: show input level so user knows the mic is alive on mobile
+  const meter = Math.min(100, Math.round(rms * 600));
+  const bars = '█'.repeat(Math.max(1, Math.round(meter / 5))) + '░'.repeat(20 - Math.max(1, Math.round(meter / 5)));
+  statusEl.textContent = `🎙 入力レベル ${bars} ${meter}%  (発音してください)`;
+
   drawUser();
   requestAnimationFrame(() => pitchLoop(analyser));
 }
@@ -616,11 +653,22 @@ function finalizeAnalysis() {
   if (!seg || seg.dur < 0.12) {
     scoreEl.textContent = '--';
     toneScoresEl.innerHTML = '';
-    statusEl.textContent = '⚠️ 音声が検出できませんでした。マイク音量を確認してもう一度お試しください';
+    const peak = state.peakRms || 0;
+    let msg;
+    if (peak < 0.003) {
+      msg = `⚠️ マイクから音がほぼ届いていません (ピーク ${Math.round(peak*600)}%)。\n・別アプリがマイクを掴んでいないか確認\n・ブラウザ設定→サイトのマイク権限を確認\n・iOSはSafariからのHTTPS必須 (file://やhttpでは動作しません)\n・「Aa」メニュー→Webサイトの設定→マイク=許可`;
+    } else if (peak < 0.015) {
+      msg = `⚠️ 入力レベルが低すぎます (ピーク ${Math.round(peak*600)}%)。マイクの近くでもう少し大きな声で発音してみてください`;
+    } else {
+      msg = `⚠️ 有声区間を検出できませんでした (ピーク ${Math.round(peak*600)}%)。声の高さが検出範囲(60-600Hz)外の可能性があります`;
+    }
+    statusEl.textContent = msg;
+    statusEl.style.whiteSpace = 'pre-line';
     state.finalized = false;
     drawIdeal();
     return;
   }
+  statusEl.style.whiteSpace = '';
   // Add a tiny padding so the line doesn't kiss the canvas edges
   const PAD = 0.04; // 40ms
   state.voicedStart = Math.max(0, seg.start - PAD);
